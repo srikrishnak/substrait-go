@@ -62,6 +62,9 @@ func (rc *RelCommon) Hint() *Hint {
 }
 
 func (rc *RelCommon) toProto() *proto.RelCommon {
+	if rc.hint == nil && rc.advExtension == nil && rc.mapping == nil {
+		return nil
+	}
 	ret := &proto.RelCommon{
 		Hint:              rc.hint,
 		AdvancedExtension: rc.advExtension,

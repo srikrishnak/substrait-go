@@ -53,6 +53,26 @@ var baseSchemaReverse = types.NamedStruct{Names: []string{"x", "y"},
 		},
 	}}
 
+var employeeSchema = types.NamedStruct{Names: []string{"employee_id", "name", "department_id", "salary", "hire_date"},
+	Struct: types.StructType{
+		Nullability: types.NullabilityRequired,
+		Types: []types.Type{
+			&types.Int32Type{Nullability: types.NullabilityRequired},
+			&types.StringType{Nullability: types.NullabilityNullable},
+			&types.Int32Type{Nullability: types.NullabilityNullable},
+			&types.DecimalType{Precision: 10, Scale: 2, Nullability: types.NullabilityNullable},
+			&types.StringType{Nullability: types.NullabilityNullable},
+		},
+	}}
+
+var employeeSalariesSchema = types.NamedStruct{Names: []string{"name", "salary"},
+	Struct: types.StructType{
+		Types: []types.Type{
+			&types.StringType{Nullability: types.NullabilityNullable},
+			&types.DecimalType{Precision: 10, Scale: 2, Nullability: types.NullabilityNullable},
+		},
+	}}
+
 func TestBasicEmitPlan(t *testing.T) {
 	b := plan.NewBuilderDefault()
 	root, err := b.NamedScanRemap([]string{"test"},
@@ -1517,4 +1537,188 @@ func TestSetRelErrors(t *testing.T) {
 	_, err = b.SetRemap(plan.SetOpMinusMultiset, []int32{3}, scan1, scan2)
 	assert.ErrorIs(t, err, substraitgo.ErrInvalidRel)
 	assert.ErrorContains(t, err, "output mapping index out of range")
+}
+
+func makeProjection(columns []int) *expr.MaskExpression {
+	structItems := make([]*substraitproto.Expression_MaskExpression_StructItem, len(columns))
+	for i, p := range columns {
+		structItems[i] = &substraitproto.Expression_MaskExpression_StructItem{Field: int32(p)}
+	}
+
+	return expr.MaskExpressionFromProto(
+		&substraitproto.Expression_MaskExpression{
+			Select: &substraitproto.Expression_MaskExpression_StructSelect{
+				StructItems: structItems,
+			},
+			MaintainSingularStruct: true,
+		})
+}
+
+func TestCreateTableAsSelectRel(t *testing.T) {
+	for _, td := range []struct {
+		name             string
+		relations        string
+		projectionInScan *expr.MaskExpression
+		columnsInProject []int
+	}{
+		{
+			name: "employee_salaries",
+			relations: `"relations": [
+				{
+					"root": {
+						"input": {
+							"write": {
+								"namedTable": {
+									"names": [
+										"main",
+										"employee_salaries"
+									]
+								},
+								"tableSchema": {
+									"names": [
+										"name",
+										"salary"
+									],
+									"struct": {
+										"types": [
+											{
+												"string": {
+													"nullability": "NULLABILITY_NULLABLE"
+												}
+											},
+											{
+												"decimal": {
+													"scale": 2,
+													"precision": 10,
+													"nullability": "NULLABILITY_NULLABLE"
+												}
+											}
+										]
+									}
+								},
+								"op": "WRITE_OP_CTAS",
+								"input": {
+									"project": {
+										"input": {
+											"read": {
+												"baseSchema": {
+													"names": [
+														"employee_id",
+														"name",
+														"department_id",
+														"salary",
+														"role"
+													],
+													"struct": {
+														"types": [
+															{
+																"i32": {
+																	"nullability": "NULLABILITY_REQUIRED"
+																}
+															},
+															{
+																"string": {
+																	"nullability": "NULLABILITY_NULLABLE"
+																}
+															},
+															{
+																"i32": {
+																	"nullability": "NULLABILITY_NULLABLE"
+																}
+															},
+															{
+																"decimal": {
+																	"scale": 2,
+																	"precision": 10,
+																	"nullability": "NULLABILITY_NULLABLE"
+																}
+															},
+															{
+																"string": {
+																	"nullability": "NULLABILITY_NULLABLE"
+																}
+															}
+														],
+														"nullability": "NULLABILITY_REQUIRED"
+													}
+												},
+												"projection": {
+													"select": {
+														"structItems": [
+															{
+																"field": 1
+															},
+															{
+																"field": 3
+															}
+														]
+													},
+													"maintainSingularStruct": true
+												},
+												"namedTable": {
+													"names": [
+														"employees"
+													]
+												}
+											}
+										},
+										"expressions": [
+											{
+												"selection": {
+													"directReference": {
+														"structField": {}
+													},
+													"rootReference": {}
+												}
+											},
+											{
+												"selection": {
+													"directReference": {
+														"structField": {
+															"field": 1
+														}
+													},
+													"rootReference": {}
+												}
+											}
+										]
+									}
+								}
+							}
+						},
+						"names": [
+							"name",
+							"salary"
+						]
+					}
+				}
+			]`,
+			projectionInScan: makeProjection([]int{1, 3}),
+			columnsInProject: []int{0, 1},
+		},
+	} {
+		t.Run(td.name, func(t *testing.T) {
+			expectedJSON := `{` + versionStruct + `,` + td.relations + `}`
+			b := plan.NewBuilderDefault()
+			scan := b.NamedScan([]string{"employees"}, employeeSchema)
+			scan.SetProjection(td.projectionInScan)
+
+			refs := make([]expr.Expression, len(td.columnsInProject))
+			for i, _ := range td.columnsInProject {
+				ref, err := b.RootFieldRef(scan, int32(i))
+				require.NoError(t, err)
+				refs[i] = ref
+			}
+			project, err := b.Project(scan, refs...)
+			require.NoError(t, err)
+
+			create, err := b.CreateTableAsSelect(project, []string{"main", td.name}, employeeSalariesSchema)
+			require.NoError(t, err)
+
+			p, err := b.Plan(create, []string{"a", "b"})
+			require.NoError(t, err)
+
+			checkRoundTrip(t, expectedJSON, p)
+		})
+	}
 }

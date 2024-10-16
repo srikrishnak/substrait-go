@@ -411,6 +411,11 @@ type MaskStructItem struct {
 func (m *MaskStructItem) Field() int32      { return m.field }
 func (m *MaskStructItem) Child() MaskSelect { return m.child }
 func (m *MaskStructItem) ToProto() *proto.Expression_MaskExpression_StructItem {
+	if m.child == nil {
+		return &proto.Expression_MaskExpression_StructItem{
+			Field: m.field,
+		}
+	}
 	return &proto.Expression_MaskExpression_StructItem{
 		Field: m.field,
 		Child: m.child.ToProto(),
