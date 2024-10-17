@@ -348,8 +348,9 @@ func RelFromProto(rel *proto.Rel, reg expr.ExtensionRegistry) (Rel, error) {
 			cond:         cond,
 			advExtension: rel.Filter.AdvancedExtension,
 		}
-		out.fromProtoCommon(rel.Filter.Common)
-
+		if rel.Filter.Common != nil {
+			out.fromProtoCommon(rel.Filter.Common)
+		}
 		return out, nil
 	case *proto.Rel_Fetch:
 		input, err := RelFromProto(rel.Fetch.Input, reg)
