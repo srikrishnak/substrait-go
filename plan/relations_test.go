@@ -446,6 +446,12 @@ func TestProjectRecordType(t *testing.T) {
 	expected = *types.NewRecordTypeFromTypes([]types.Type{&types.Int64Type{}})
 	result = newRel.RecordType()
 	assert.Equal(t, expected, result)
+
+	rel.mapping = nil
+	rel.exprs = []expr.Expression{&expr.PrimitiveLiteral[int64]{Value: 1}}
+	expected = types.StructType{Types: []types.Type{&types.Int64Type{}}}
+	result = rel.RecordType()
+	assert.Equal(t, expected, result)
 }
 
 func TestExtensionSingleRecordType(t *testing.T) {
